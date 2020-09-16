@@ -163,13 +163,13 @@ class Learner:
     __DEFAULT_MIDDLEWARE_CLASS = RestMiddleware
 
     LEARNER_VERSION = LEARNING_LOOP_VERSION
+    LOWEST_COMPATIBLE_VERSION = 2   # Disallow versions lower than this
+
     node_splitter = BytestringSplitter(VariableLengthBytestring)
     version_splitter = BytestringSplitter((int, 2, {"byteorder": "big"}))
     tracker_class = FleetSensor
 
     invalid_metadata_message = "{} has invalid metadata.  The node's stake may have ended, or it is transitioning to a new interface. Ignoring."
-    unknown_version_message = "{} purported to be of version {}, but we're only version {}.  Is there a new version of NuCypher?"
-    really_unknown_version_message = "Unable to glean address from node that perhaps purported to be version {}.  We're only version {}."
     fleet_state_icon = ""
 
     _DEBUG_MODE = False
@@ -193,7 +193,7 @@ class Learner:
         pass
 
     def __init__(self,
-                 domains: set,
+                 domain: str,
                  node_class: object = None,
                  network_middleware: RestMiddleware = None,
                  start_learning_now: bool = False,
@@ -210,7 +210,7 @@ class Learner:
         self.log = Logger("learning-loop")  # type: Logger
 
         self.learning_deferred = Deferred()
-        self.learning_domains = domains
+        self.learning_domain = domain
         if not self.federated_only:
             default_middleware = self.__DEFAULT_MIDDLEWARE_CLASS(registry=self.registry)
         else:
@@ -293,10 +293,8 @@ class Learner:
 
         discovered = []
 
-        if self.learning_domains:
-            one_and_only_learning_domain = tuple(self.learning_domains)[
-                0]  # TODO: Are we done with multiple domains?  2144, 1580
-            canonical_sage_uris = self.network_middleware.TEACHER_NODES.get(one_and_only_learning_domain, ())
+        if self.learning_domain:
+            canonical_sage_uris = self.network_middleware.TEACHER_NODES.get(self.learning_domain, ())
 
             for uri in canonical_sage_uris:
                 try:
@@ -338,9 +336,7 @@ class Learner:
 
         self.done_seeding = True
 
-        if read_storage is True:
-            nodes_restored_from_storage = self.read_nodes_from_storage()
-
+        nodes_restored_from_storage = self.read_nodes_from_storage() if read_storage else []
         discovered.extend(nodes_restored_from_storage)
 
         if discovered and record_fleet_state:
@@ -818,12 +814,10 @@ class Learner:
             self.log.info("Bad response from teacher {}: {} - {}".format(current_teacher, response, response.content))
             return
 
-        if not set(self.learning_domains).intersection(set(current_teacher.serving_domains)):
-            teacher_domains = ",".join(current_teacher.serving_domains)
-            learner_domains = ",".join(self.learning_domains)
-            self.log.debug(
-                f"{current_teacher} is serving {teacher_domains}, but we are learning {learner_domains}")
-            return  # This node is not serving any of our domains.
+        if self.learning_domain != current_teacher.serving_domain:
+            self.log.debug(f"{current_teacher} is serving '{current_teacher.serving_domain}', "
+                           f"but we are learning '{self.learning_domain}'")
+            return  # This node is not serving our domain.
 
         #
         # Deserialize
@@ -933,7 +927,7 @@ class Teacher:
     __DEFAULT_MIN_SEED_STAKE = 0
 
     def __init__(self,
-                 domains: Set,
+                 domain: str,  # TODO: Consider using a Domain type
                  certificate: Certificate,
                  certificate_filepath: str,
                  interface_signature=NOT_SIGNED.bool_value(False),
@@ -945,7 +939,7 @@ class Teacher:
         # Fleet
         #
 
-        self.serving_domains = domains
+        self.serving_domain = domain
         self.fleet_state_checksum = None
         self.fleet_state_updated = None
         self.last_seen = NEVER_SEEN("No Connection to Node")
@@ -992,8 +986,18 @@ class Teacher:
     class WrongMode(TypeError):
         """Raised when a Character tries to use another Character as decentralized when the latter is federated_only."""
 
-    class IsFromTheFuture(TypeError):
+    class UnexpectedVersion(TypeError):
+        """Raised when deserializing a Character from a unexpected and incompatible version."""
+
+    class IsFromTheFuture(UnexpectedVersion):
         """Raised when deserializing a Character from a future version."""
+
+    class AreYouFromThePast(UnexpectedVersion):
+        """Raised when deserializing a Character from a previous, now unsupported version."""
+
+    unknown_version_message = "{} purported to be of version {}, but we're version {}."
+    really_unknown_version_message = "Unable to glean address from node that purported to be version {}. " \
+                                     "We're version {}."
 
     @classmethod
     def set_cert_storage_function(cls, node_storage_function):
@@ -1216,7 +1220,7 @@ class Teacher:
 
         version, node_bytes = self.version_splitter(response_data, return_remainder=True)
 
-        sprout = self.internal_splitter(node_bytes, partial=True)
+        sprout = self.payload_splitter(node_bytes, partial=True)
 
         verifying_keys_match = sprout.verifying_key == self.public_keys(SigningPower)
         encrypting_keys_match = sprout.encrypting_key == self.public_keys(DecryptingPower)

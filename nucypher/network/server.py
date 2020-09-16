@@ -22,22 +22,20 @@ from bytestring_splitter import BytestringSplitter
 from constant_sorrow import constants
 from constant_sorrow.constants import FLEET_STATES_MATCH, NO_BLOCKCHAIN_CONNECTION, NO_KNOWN_NODES
 from flask import Flask, Response, jsonify, request
-from hendrix.experience import crosstown_traffic
 from jinja2 import Template, TemplateError
 from typing import Tuple
-from umbral.keys import UmbralPublicKey
 from umbral.kfrags import KFrag
 from web3.exceptions import TimeExhausted
 
 import nucypher
 from nucypher.config.constants import MAX_UPLOAD_CONTENT_LENGTH
 from nucypher.config.storages import ForgetfulNodeStorage
+from nucypher.crypto.keypairs import HostingKeypair
 from nucypher.crypto.kits import UmbralMessageKit
 from nucypher.crypto.powers import KeyPairBasedPower, PowerUpError
 from nucypher.crypto.signing import InvalidSignature
 from nucypher.crypto.utils import canonical_address_from_umbral_key
 from nucypher.datastore.datastore import RecordNotFound, DatastoreTransactionError
-from nucypher.datastore.keypairs import HostingKeypair
 from nucypher.datastore.models import PolicyArrangement, Workorder
 from nucypher.network import LEARNING_LOOP_VERSION
 from nucypher.network.exceptions import NodeSeemsToBeDown
@@ -80,7 +78,7 @@ class ProxyRESTServer:
 def make_rest_app(
         db_filepath: str,
         this_node,
-        serving_domains,
+        serving_domain,
         log=Logger("http-application-layer")
         ) -> Tuple:
 
@@ -398,7 +396,7 @@ def make_rest_app(
                 content = status_template.render(this_node=this_node,
                                                  known_nodes=this_node.known_nodes,
                                                  previous_states=previous_states,
-                                                 domains=serving_domains,
+                                                 domain=serving_domain,
                                                  version=nucypher.__version__,
                                                  checksum_address=this_node.checksum_address)
             except Exception as e:
